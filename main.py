@@ -598,13 +598,15 @@ class Visualizer:
 
         accent = np.array(ACCENT_RGB, dtype=np.uint8)
         yv = np.clip((cx - ys * g).astype(int), 0, h - 1)
-        # 逐列连线：相邻点之间的纵向区间都填上，得到连续细线
-        buf[yv[0]:yv[0] + 2, WAVE_L:WAVE_L + 2] = accent
-        for i in range(1, cols):
-            xi = WAVE_L + int(i * step)
-            a, b = int(yv[i - 1]), int(yv[i])
+        # 逐列连线：每段 x 覆盖到下一个点的横坐标，纵向填满两点之间，
+        # 宽度按实际点间距取，构造上保证没有横向缝隙
+        for i in range(cols):
+            x0 = WAVE_L + int(i * step)
+            x1 = WAVE_L + int((i + 1) * step) if i + 1 < cols else x0 + 2
+            x1 = max(x1, x0 + 2)
+            a, b = int(yv[i]), int(yv[min(i + 1, cols - 1)])
             lo, hi = (a, b) if a <= b else (b, a)
-            buf[lo:hi + 1, xi:xi + 2] = accent
+            buf[lo:hi + 1, x0:x1] = accent
         self._push(c)
 
 
