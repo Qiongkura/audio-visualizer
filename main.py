@@ -588,7 +588,7 @@ class Visualizer:
                 self.wave_gain += (target - self.wave_gain) * 0.05
         g = self.wave_gain
 
-        cols = int(min(600, (w - WAVE_L - WAVE_R), x.size))
+        cols = int(min(w - WAVE_L - WAVE_R, x.size))   # 每像素一个点 → 1px 细线
         m = (x.size // cols) * cols
         xr = x[:m].reshape(cols, -1)
         # 分桶均值 = 低通后的平滑波形曲线
@@ -602,8 +602,8 @@ class Visualizer:
         # 宽度按实际点间距取，构造上保证没有横向缝隙
         for i in range(cols):
             x0 = WAVE_L + int(i * step)
-            x1 = WAVE_L + int((i + 1) * step) if i + 1 < cols else x0 + 2
-            x1 = max(x1, x0 + 2)
+            x1 = WAVE_L + int((i + 1) * step) if i + 1 < cols else x0 + 1
+            x1 = max(x1, x0 + 1)
             a, b = int(yv[i]), int(yv[min(i + 1, cols - 1)])
             lo, hi = (a, b) if a <= b else (b, a)
             buf[lo:hi + 1, x0:x1] = accent
