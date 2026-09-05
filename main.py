@@ -224,8 +224,19 @@ class Visualizer:
         self._start_engine(None)
 
         root.protocol("WM_DELETE_WINDOW", self._on_close)
+        root.report_callback_exception = self._log_tk_error
         root.after(16, self._tick)
         root.after(1500, self._watchdog)
+
+    def _log_tk_error(self, exc, val, tb):
+        """无控制台运行(pythonw)时把回调异常落盘，便于排查"""
+        try:
+            import traceback
+            with open("error.log", "a", encoding="utf-8") as f:
+                f.write(time.strftime("[%Y-%m-%d %H:%M:%S]\n") +
+                        "".join(traceback.format_exception(exc, val, tb)) + "\n")
+        except Exception:
+            pass
 
     # ================= UI =================
     def _build_ui(self):
