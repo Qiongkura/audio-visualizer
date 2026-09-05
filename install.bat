@@ -1,12 +1,11 @@
 @echo off
-chcp 65001 >nul
 cd /d %~dp0
-echo [1/2] åˆ›å»ºè™šæ‹Ÿç¯å¢ƒ...
+echo [1/2] ´´½¨ĞéÄâ»·¾³...
 python -m venv venv
-echo [2/2] å®‰è£…ä¾èµ– (pyaudiowpatch, numpy)...
+echo [2/2] °²×°ÒÀÀµ (pyaudiowpatch, numpy)...
 venv\Scripts\python.exe -m pip install -r requirements.txt
 if errorlevel 1 (
     echo.
-    echo å®‰è£…å¤±è´¥ï¼Œè¯·æ£€æŸ¥ç½‘ç»œåé‡è¯•ã€‚
+    echo °²×°Ê§°Ü£¬Çë¼ì²éÍøÂçºóÖØÊÔ¡£
 )
 pause

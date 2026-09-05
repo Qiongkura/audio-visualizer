@@ -1,8 +1,7 @@
 @echo off
-chcp 65001 >nul
 cd /d %~dp0
 if not exist venv\Scripts\python.exe (
-    echo å°šæœªå®‰è£…ä¾èµ–ï¼Œè¯·å…ˆè¿è¡Œ install.bat
+    echo ÉĞÎ´°²×°ÒÀÀµ£¬ÇëÏÈÔËĞĞ install.bat
     pause
     exit /b 1
 )
