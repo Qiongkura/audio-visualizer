@@ -1,2 +1,3 @@
 pyaudiowpatch>=0.2.12.6
 numpy>=1.24
+customtkinter>=5.2

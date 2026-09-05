@@ -1,25 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-音频可视化程序
+音频可视化程序（ins 风格 UI）
 自动识别电脑中正在播放的声音（WASAPI 环回采集，无需虚拟声卡），
-实时显示频谱（对数刻度柱状图 + 峰值保持）与波形（包络自动增益）。
+实时显示频谱（对数刻度、Instagram 渐变配色）与波形（自动增益包络）。
 
-依赖: pip install pyaudiowpatch numpy
+依赖: pip install pyaudiowpatch numpy customtkinter
 运行: python main.py
 """
-import ctypes
 import threading
 import time
 
 import numpy as np
 import pyaudiowpatch as pyaudio
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 
-try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
-except Exception:
-    pass
+import customtkinter as ctk
 
 RING_SIZE = 1 << 15          # 环形缓冲区 32768 采样
 MIN_F, MAX_F = 30.0, 16000.0 # 频谱显示频率范围
@@ -27,35 +23,50 @@ DB_FLOOR = -85.0             # 频谱底噪（dB）
 BAR_RELEASE = 1.5            # 频谱柱每帧下落 dB
 PEAK_FALL = 0.55             # 峰值帽每帧下落 dB
 
-BG = "#0b0f14"
-PANEL = "#0f1520"
-FG = "#e5e7eb"
-DIM = "#94a3b8"
-ACCENT = "#38bdf8"
-GRID = "#1e293b"
-FONT = ("Microsoft YaHei UI", 9)
-FONT_S = ("Microsoft YaHei UI", 8)
+# ---------- 配色（Instagram 风格） ----------
+BG      = "#F4F4F6"   # 应用背景
+CARD    = "#FFFFFF"   # 卡片
+TXT     = "#141419"   # 主文字
+SUB     = "#9A9AA3"   # 次要文字
+FAINT   = "#C9C9D1"   # 坐标刻度
+LINE    = "#F1F1F5"   # 网格线
+ACCENT  = "#E1306C"   # 强调色（ins 粉）
+HOVER   = "#C13584"
+W_FILL  = "#FDEFF4"   # 波形淡粉填充
+GRAD_STOPS = ("#833AB4", "#C13584", "#E1306C", "#FD1D1D", "#F77737", "#FCAF45")
+
+FONT_FAMILY = "Microsoft YaHei UI"
+
+
+def hex2rgb(s):
+    return tuple(int(s[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def rgb2hex(c):
+    return "#%02x%02x%02x" % c
 
 
 def lerp3(c1, c2, t):
     return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2))
 
 
-def build_color_lut(n=128):
-    """频谱柱颜色: 绿 -> 黄 -> 红（按响度）"""
-    green, yellow, red = (34, 197, 94), (250, 204, 21), (239, 68, 68)
+def gradient_lut(stops, n):
+    cols = [hex2rgb(s) for s in stops]
     lut = []
     for i in range(n):
-        t = i / (n - 1)
-        if t < 0.55:
-            c = lerp3(green, yellow, t / 0.55)
-        else:
-            c = lerp3(yellow, red, (t - 0.55) / 0.45)
-        lut.append("#%02x%02x%02x" % c)
+        t = i / (n - 1) * (len(cols) - 1)
+        k = min(int(t), len(cols) - 2)
+        lut.append(rgb2hex(lerp3(cols[k], cols[k + 1], t - k)))
     return lut
 
 
-COLOR_LUT = build_color_lut()
+def darken(c_hex, f):
+    return rgb2hex(tuple(int(v * f) for v in hex2rgb(c_hex)))
+
+
+BAR_LUT = gradient_lut(GRAD_STOPS, 96)               # 频谱柱: 按频率位置渐变
+CAP_LUT = [darken(c, 0.72) for c in BAR_LUT]         # 峰值帽: 同色系加深
+WASH_TOP, WASH_BOT = hex2rgb("#FFFFFF"), hex2rgb("#FCF6F2")  # 卡片极淡渐变
 
 
 class AudioEngine:
@@ -75,7 +86,6 @@ class AudioEngine:
 
     # ---------- 设备 ----------
     def list_loopbacks(self):
-        """所有可采集的输出设备（环回形式）"""
         out = []
         for d in self.pa.get_loopback_device_info_generator():
             out.append({
@@ -87,7 +97,6 @@ class AudioEngine:
         return out
 
     def default_loopback(self):
-        """当前系统默认输出设备对应的环回设备"""
         try:
             wasapi = self.pa.get_host_api_info_by_type(pyaudio.paWASAPI)
             spk = self.pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
@@ -102,7 +111,6 @@ class AudioEngine:
 
     # ---------- 采集 ----------
     def start(self, device=None):
-        """device=None 表示自动跟随系统默认输出"""
         self.stop()
         try:
             if device is None:
@@ -187,10 +195,11 @@ class AudioEngine:
 class Visualizer:
     def __init__(self, root):
         self.root = root
-        root.title("音频可视化 - 系统声音频谱/波形")
-        root.configure(bg=BG)
-        root.geometry("1080x640")
-        root.minsize(720, 460)
+        ctk.set_appearance_mode("light")
+        root.title("Audio Visualizer · 音频可视化")
+        root.geometry("1080x660")
+        root.minsize(760, 500)
+        root.configure(fg_color=BG)
 
         self.engine = AudioEngine()
         self.paused = False
@@ -210,52 +219,143 @@ class Visualizer:
         self._start_engine(None)
 
         root.protocol("WM_DELETE_WINDOW", self._on_close)
-        root.after(16, self._tick)          # ~60 FPS
-        root.after(1500, self._watchdog)    # 设备监控/自动重连
+        root.after(16, self._tick)
+        root.after(1500, self._watchdog)
 
     # ================= UI =================
     def _build_ui(self):
-        top = tk.Frame(self.root, bg=PANEL)
-        top.pack(fill="x")
+        f_title = ctk.CTkFont(FONT_FAMILY, 20, "bold")
+        f_sub = ctk.CTkFont(FONT_FAMILY, 11)
+        f_ui = ctk.CTkFont(FONT_FAMILY, 12)
+        f_s = ctk.CTkFont(FONT_FAMILY, 10)
+        f_cap = ctk.CTkFont(FONT_FAMILY, 9)
 
-        tk.Label(top, text="采集设备:", bg=PANEL, fg=DIM, font=FONT).pack(side="left", padx=(10, 4), pady=8)
-        self.combo = ttk.Combobox(top, width=46, state="readonly", font=FONT)
-        self.combo.pack(side="left", padx=2)
-        self.combo.bind("<<ComboboxSelected>>", self._on_pick_device)
+        # ---- 顶栏 ----
+        head = ctk.CTkFrame(self.root, fg_color="transparent")
+        head.pack(fill="x", padx=22, pady=(16, 4))
 
-        ttk.Button(top, text="刷新", width=6, command=self._populate_devices).pack(side="left", padx=4)
+        logo = tk.Canvas(head, width=104, height=36, bg=BG, highlightthickness=0)
+        logo.pack(side="left")
+        for i, col in enumerate(GRAD_STOPS):
+            x = 8 + i * 19
+            logo.create_oval(x - 5, 13, x + 5, 23, fill=col, width=0)
 
-        cb = tk.Checkbutton(top, text="跟随默认输出设备", variable=self.follow_default,
-                            command=self._on_follow_toggle, bg=PANEL, fg=FG,
-                            activebackground=PANEL, activeforeground=FG,
-                            selectcolor="#1e293b", font=FONT)
-        cb.pack(side="left", padx=10)
+        titles = ctk.CTkFrame(head, fg_color="transparent")
+        titles.pack(side="left", padx=(6, 0))
+        ctk.CTkLabel(titles, text="Audio Visualizer", font=f_title,
+                     text_color=TXT).pack(anchor="w")
+        ctk.CTkLabel(titles, text="系统声音 · 实时频谱与波形", font=f_sub,
+                     text_color=SUB).pack(anchor="w")
 
-        self.pause_btn = tk.Button(top, text="暂停", width=8, command=self._toggle_pause,
-                                   bg="#1e293b", fg=FG, activebackground="#334155",
-                                   activeforeground=FG, relief="flat", font=FONT)
-        self.pause_btn.pack(side="right", padx=10)
+        self.pause_btn = ctk.CTkButton(head, text="暂停", width=92, height=36,
+                                       corner_radius=18, font=ctk.CTkFont(FONT_FAMILY, 13, "bold"),
+                                       fg_color=ACCENT, hover_color=HOVER,
+                                       command=self._toggle_pause)
+        self.pause_btn.pack(side="right", padx=(10, 0))
 
+        # ---- 控制行 ----
+        ctrl = ctk.CTkFrame(self.root, fg_color="transparent")
+        ctrl.pack(fill="x", padx=22, pady=(6, 2))
+
+        self.combo = ctk.CTkComboBox(
+            ctrl, width=380, height=34, corner_radius=10, font=f_ui,
+            border_width=1, border_color="#E6E6EB", fg_color=CARD,
+            text_color=TXT, button_color="#E6E6EB", button_hover_color="#D9D9E0",
+            dropdown_fg_color=CARD, dropdown_text_color=TXT,
+            dropdown_hover_color="#F8E8EE", dropdown_font=f_ui,
+            command=self._on_pick_device)
+        self.combo.pack(side="left", fill="x", expand=True)
+
+        ctk.CTkButton(ctrl, text="刷新", width=68, height=34, corner_radius=10,
+                      font=f_ui, fg_color="#EBEBEF", hover_color="#E0E0E6",
+                      text_color=TXT,
+                      command=self._populate_devices).pack(side="left", padx=(10, 10))
+
+        ctk.CTkSwitch(ctrl, text="跟随默认输出设备", variable=self.follow_default,
+                      command=self._on_follow_toggle, font=f_ui, text_color=TXT,
+                      progress_color=ACCENT, button_hover_color=HOVER
+                      ).pack(side="left")
+
+        # ---- 状态行 ----
+        srow = ctk.CTkFrame(self.root, fg_color="transparent")
+        srow.pack(fill="x", padx=24, pady=(6, 6))
         self.status_var = tk.StringVar(value="正在启动…")
-        status = tk.Label(self.root, textvariable=self.status_var, bg=BG, fg=DIM,
-                          font=FONT_S, anchor="w")
-        status.pack(fill="x", padx=12, pady=(6, 2))
+        ctk.CTkLabel(srow, textvariable=self.status_var, font=f_s,
+                     text_color=SUB, anchor="w").pack(side="left")
+        self.fps_lbl = ctk.CTkLabel(srow, text="— FPS", font=f_s,
+                                    text_color="#6F6F78", fg_color="#EBEBEF",
+                                    corner_radius=11, height=22, width=64)
+        self.fps_lbl.pack(side="right")
 
-        self.spec_canvas = tk.Canvas(self.root, bg=BG, highlightthickness=0)
-        self.spec_canvas.pack(fill="both", expand=True, padx=8, pady=(2, 3))
-        self.wave_canvas = tk.Canvas(self.root, bg=BG, highlightthickness=0)
-        self.wave_canvas.pack(fill="both", expand=True, padx=8, pady=(3, 8))
+        # ---- 频谱卡片 ----
+        spec_card = ctk.CTkFrame(self.root, fg_color=CARD, corner_radius=18)
+        spec_card.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+        self.spec_canvas = tk.Canvas(spec_card, bg=CARD, highlightthickness=0, bd=0)
+        self.spec_canvas.pack(fill="both", expand=True, padx=2, pady=2)
 
-        self.spec_canvas.bind("<Configure>", lambda e: self._recalc_bars())
-        self._recalc_bars()
+        # ---- 波形卡片 ----
+        wave_card = ctk.CTkFrame(self.root, fg_color=CARD, corner_radius=18)
+        wave_card.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        self.wave_canvas = tk.Canvas(wave_card, bg=CARD, highlightthickness=0, bd=0)
+        self.wave_canvas.pack(fill="both", expand=True, padx=2, pady=2)
 
-    def _recalc_bars(self):
+        self.spec_canvas.bind("<Configure>", self._on_resize_spec)
+        self.wave_canvas.bind("<Configure>", lambda e: self._draw_static(self.wave_canvas, "wave"))
+
+    def _on_resize_spec(self, _e=None):
         w = self.spec_canvas.winfo_width()
-        if w > 50:
-            self.n_bars = max(24, min(100, (w - 24) // 9))
+        if w > 60:
+            self.n_bars = max(24, min(90, (w - 58) // 11))
         if self.bars.size != self.n_bars:
             self.bars = np.full(self.n_bars, DB_FLOOR, dtype=np.float64)
             self.peaks = np.full(self.n_bars, DB_FLOOR, dtype=np.float64)
+        self._draw_static(self.spec_canvas, "spec")
+
+    # ---------- 卡片静态层（渐变底纹 + 网格 + 刻度） ----------
+    def _draw_static(self, c, kind):
+        c.delete("all")
+        w, h = c.winfo_width(), c.winfo_height()
+        if w < 60 or h < 60:
+            return
+        # 极淡的纵向渐变底纹
+        steps = 64
+        for s in range(steps):
+            u = s / (steps - 1)
+            col = rgb2hex(lerp3(WASH_TOP, WASH_BOT, u))
+            y0 = h * s / steps
+            c.create_rectangle(0, y0, w, h * (s + 1) / steps + 1, fill=col, width=0)
+
+        if kind == "spec":
+            baseline = h - 26
+            top_m = 32.0
+            span = -DB_FLOOR
+
+            def y_of(db):
+                return baseline - (db - DB_FLOOR) / span * (baseline - top_m)
+
+            for db in (0, -20, -40, -60, -80):
+                y = y_of(db)
+                c.create_line(46, y, w - 16, y, fill=LINE)
+                c.create_text(40, y, text=f"{db}", fill=FAINT,
+                              font=("Microsoft YaHei UI", 8), anchor="e")
+            sr = max(8000, self.engine.sample_rate or 48000)
+            top_f = min(MAX_F, sr / 2.0 - 1.0)
+            for f, label in ((100, "100Hz"), (1000, "1kHz"), (10000, "10kHz")):
+                if MIN_F < f < top_f:
+                    x = 46 + (np.log(f) - np.log(MIN_F)) / \
+                        (np.log(top_f) - np.log(MIN_F)) * (w - 62)
+                    c.create_line(x, top_m - 4, x, baseline, fill=LINE)
+                    c.create_text(x, baseline + 10, text=label, fill=FAINT,
+                                  font=("Microsoft YaHei UI", 8))
+            c.create_text(18, 10, text="SPECTRUM · 频谱", fill=SUB,
+                          font=("Microsoft YaHei UI", 9, "bold"), anchor="w")
+        else:
+            cx = h / 2.0
+            c.create_line(14, cx + cx * 0.5, w - 14, cx + cx * 0.5, fill="#F7F7FA")
+            c.create_line(14, cx - cx * 0.5, w - 14, cx - cx * 0.5, fill="#F7F7FA")
+            c.create_line(14, cx, w - 14, cx, fill=LINE)
+            c.create_text(18, 10, text="WAVEFORM · 波形", fill=SUB,
+                          font=("Microsoft YaHei UI", 9, "bold"), anchor="w")
 
     def _populate_devices(self):
         devices = self.engine.list_loopbacks()
@@ -267,18 +367,18 @@ class Visualizer:
                 label += " "
             self.device_map[label] = d
             names.append(label)
-        self.combo["values"] = names
+        self.combo.configure(values=names)
         if self.follow_default.get() or self.engine.device is None:
-            self.combo.current(0)
+            self.combo.set(names[0])
 
     # ================= 采集控制 =================
     def _start_engine(self, device):
         if self.engine.start(device):
             d = self.engine.device
             self.status_var.set(
-                f"● 正在采集: {d['name']}   {self.engine.sample_rate} Hz / {self.engine.channels}ch")
+                f"● 正在采集  {d['name']}   {self.engine.sample_rate} Hz / {self.engine.channels}ch")
         else:
-            self.status_var.set(f"✕ 采集失败: {self.engine.error} （1.5 秒后自动重试）")
+            self.status_var.set(f"✕ 采集失败：{self.engine.error} （1.5 秒后自动重试）")
             self.retry_at = time.time() + 1.5
 
     def _on_pick_device(self, _event=None):
@@ -292,15 +392,14 @@ class Visualizer:
 
     def _on_follow_toggle(self):
         if self.follow_default.get():
-            self.combo.current(0)
+            self.combo.set("默认输出设备（自动）")
             self._start_engine(None)
 
     def _toggle_pause(self):
         self.paused = not self.paused
-        self.pause_btn["text"] = "继续" if self.paused else "暂停"
+        self.pause_btn.configure(text="继续" if self.paused else "暂停")
 
     def _watchdog(self):
-        """跟随默认设备切换 / 掉线自动重连"""
         try:
             if not self.paused:
                 if time.time() >= self.retry_at:
@@ -329,7 +428,7 @@ class Visualizer:
         finally:
             self.root.destroy()
 
-    # ================= 绘制 =================
+    # ================= 绘制循环 =================
     def _fft_size(self):
         """按采样率自适应 FFT 点数，保持 ~43ms 时窗（48k→2048, 192k→8192）"""
         sr = self.engine.sample_rate or 48000
@@ -337,7 +436,6 @@ class Visualizer:
         return min(1 << int(round(np.log2(target))), 16384)
 
     def _wave_size(self):
-        """波形窗口采样数，保持 ~45ms 时窗"""
         return max(1024, int(0.045 * (self.engine.sample_rate or 48000)))
 
     def _tick(self):
@@ -352,9 +450,10 @@ class Visualizer:
         if now - self.fps_t0 >= 0.5:
             self.fps = self.frames / (now - self.fps_t0)
             self.frames, self.fps_t0 = 0, now
+            self.fps_lbl.configure(text=f"{self.fps:.0f} FPS")
             base = self.status_var.get().split("   [")[0].split("   FPS")[0]
             tag = "   [已暂停]" if self.paused else ""
-            self.status_var.set(f"{base}{tag}   FPS {self.fps:.0f}")
+            self.status_var.set(f"{base}{tag}")
         self.root.after(16, self._tick)
 
     def _compute_spectrum(self, x):
@@ -385,33 +484,16 @@ class Visualizer:
     def _draw_spectrum(self):
         c = self.spec_canvas
         w, h = c.winfo_width(), c.winfo_height()
-        if w < 50 or h < 50:
+        if w < 60 or h < 60:
             return
-        c.delete("all")
-
-        baseline = h - 16
-        top_m = 22.0
+        c.delete("dyn")
+        baseline = h - 26
+        top_m = 32.0
         span = -DB_FLOOR
 
         def y_of(db):
             return baseline - (db - DB_FLOOR) / span * (baseline - top_m)
 
-        # 网格 + 刻度
-        for db in (0, -20, -40, -60, -80):
-            y = y_of(db)
-            c.create_line(34, y, w - 4, y, fill=GRID)
-            c.create_text(30, y, text=f"{db}", fill=DIM, font=FONT_S, anchor="e")
-        sr = max(8000, self.engine.sample_rate or 48000)
-        top_f = min(MAX_F, sr / 2.0 - 1.0)
-        for f, label in ((100, "100Hz"), (1000, "1kHz"), (10000, "10kHz")):
-            if MIN_F < f < top_f:
-                x = 34 + (np.log(f) - np.log(MIN_F)) / (np.log(top_f) - np.log(MIN_F)) * (w - 44)
-                c.create_line(x, top_m - 6, x, baseline, fill=GRID)
-                c.create_text(x, baseline + 9, text=label, fill=DIM, font=FONT_S)
-        c.create_text(8, 6, text=f"频谱 SPECTRUM  {MIN_F:.0f}Hz - {top_f / 1000:.1f}kHz  (对数刻度)",
-                      fill=DIM, font=FONT_S, anchor="w")
-
-        # 频谱柱
         x = self.engine.read_last(self._fft_size())
         vals = self._compute_spectrum(x)
         if self.bars.size != self.n_bars:
@@ -421,35 +503,39 @@ class Visualizer:
         self.peaks = np.maximum(self.bars, self.peaks - PEAK_FALL)
 
         n = self.n_bars
-        gap = 2.0
-        bw = max(1.0, (w - 44 - gap * (n + 1)) / n)
-        x0 = 36.0
-        lut = COLOR_LUT
+        gap = 3.0
+        bw = max(2.0, (w - 58 - gap * (n + 1)) / n)
+        x0 = 46.0
         for i in range(n):
-            v = float(self.bars[i])
-            if v <= DB_FLOOR + 0.5:
-                continue
-            t = min(1.0, max(0.0, (v - DB_FLOOR) / span))
-            col = lut[int(t * (len(lut) - 1))]
+            li = int(i / max(1, n - 1) * (len(BAR_LUT) - 1))
+            col, cap = BAR_LUT[li], CAP_LUT[li]
             xa = x0 + i * (bw + gap)
-            ya = y_of(v)
-            c.create_rectangle(xa, ya, xa + bw, baseline, fill=col, width=0)
+            v = float(self.bars[i])
+            if v > DB_FLOOR + 0.5:
+                ya = y_of(v)
+                if baseline - ya > 10.0:
+                    # 圆角柱: 矩形柱身 + 顶部椭圆帽
+                    c.create_rectangle(xa, ya + 4.0, xa + bw, baseline,
+                                       fill=col, width=0, tags="dyn")
+                    c.create_oval(xa, ya, xa + bw, ya + 8, fill=col, width=0,
+                                  tags="dyn")
+                else:
+                    # 矮柱: 直接贴住基线，避免圆帽越过坐标轴
+                    c.create_rectangle(xa, ya, xa + bw, baseline,
+                                       fill=col, width=0, tags="dyn")
             pk = float(self.peaks[i])
-            yp = y_of(pk)
-            c.create_rectangle(xa, yp - 2, xa + bw, yp, fill="#e2e8f0", width=0)
-        c.create_line(34, baseline, w - 4, baseline, fill=GRID)
+            yp = min(y_of(pk), baseline - 2.0)
+            if yp > top_m + 2:
+                c.create_oval(xa, yp - 1.5, xa + bw, yp + 1.5, fill=cap,
+                              width=0, tags="dyn")
 
     def _draw_wave(self):
         c = self.wave_canvas
         w, h = c.winfo_width(), c.winfo_height()
-        if w < 50 or h < 50:
+        if w < 60 or h < 60:
             return
-        c.delete("all")
-        c.create_text(8, 6, text="波形 WAVEFORM", fill=DIM, font=FONT_S, anchor="w")
+        c.delete("dyn")
         cx = h / 2.0
-
-        for frac in (-0.5, 0.5):
-            c.create_line(4, cx + cx * frac, w - 4, cx + cx * frac, fill=GRID)
 
         x = self.engine.read_last(self._wave_size())
         if x.size < 32:
@@ -457,9 +543,9 @@ class Visualizer:
         peak = float(np.abs(x).max())
         if peak > 1e-5:
             target = (h * 0.42) / max(peak, 1e-4)
-            target = min(target, 150.0)
+            target = min(target, 1500.0)   # 上限仅防静音时放大噪声底
             if target < self.wave_gain:
-                self.wave_gain = target          # 信号变大立刻压低
+                self.wave_gain = target
             else:
                 self.wave_gain += (target - self.wave_gain) * 0.05
         g = self.wave_gain
@@ -469,31 +555,21 @@ class Visualizer:
         xr = x[:m].reshape(cols, -1)
         mins = xr.min(axis=1)
         maxs = xr.max(axis=1)
-        step = (w - 8) / (cols - 1)
+        step = (w - 28) / (cols - 1)
 
-        pts = []
+        top_pts, bot_pts = [], []
         for i in range(cols):
-            pts.append(4 + i * step)
-            pts.append(cx - maxs[i] * g)
-        # 上/下包络线 + 填充
-        top_pts = pts
-        bot_pts = []
+            xx = 14 + i * step
+            top_pts += (xx, cx - maxs[i] * g)
         for i in range(cols - 1, -1, -1):
-            bot_pts.append(4 + i * step)
-            bot_pts.append(cx - mins[i] * g)
-        poly = top_pts + bot_pts
-        c.create_polygon(*poly, fill="#134e6f", outline="", width=0)
-        c.create_line(*top_pts, fill=ACCENT, width=1)
-        c.create_line(*bot_pts, fill=ACCENT, width=1)
-        c.create_line(4, cx, w - 4, cx, fill="#334155")
-
-    # ================= 启动失败兜底 =================
-    def report_init_error(self, msg):
-        self.status_var.set(f"✕ {msg}")
+            bot_pts += (14 + i * step, cx - mins[i] * g)
+        c.create_polygon(*(top_pts + bot_pts), fill=W_FILL, width=0, tags="dyn")
+        c.create_line(*top_pts, fill=ACCENT, width=2, smooth=True, tags="dyn")
+        c.create_line(*bot_pts, fill=ACCENT, width=2, smooth=True, tags="dyn")
 
 
 def main():
-    root = tk.Tk()
+    root = ctk.CTk()
     try:
         app = Visualizer(root)
     except Exception as e:
