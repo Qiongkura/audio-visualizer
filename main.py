@@ -36,7 +36,7 @@ FAINT   = "#C9C9D1"   # 坐标刻度
 LINE_RGB  = (241, 241, 245)          # 网格线
 ACCENT    = "#E1306C"
 ACCENT_RGB  = (225, 48, 108)
-FILL_RGB    = (253, 239, 244)        # 波形淡粉填充
+FILL_RGB    = (248, 199, 220)        # 波形填充（可见的浅粉，与底纹区分开）
 WASH_TOP    = np.array([255, 255, 255], dtype=np.uint8)
 WASH_BOT    = np.array([252, 246, 242], dtype=np.uint8)
 GRAD_STOPS = ("#833AB4", "#C13584", "#E1306C", "#FD1D1D", "#F77737", "#FCAF45")
@@ -468,7 +468,7 @@ class Visualizer:
         return min(1 << int(round(np.log2(target))), 16384)
 
     def _wave_size(self):
-        return max(1024, int(0.045 * (self.engine.sample_rate or 48000)))
+        return max(1024, int(0.09 * (self.engine.sample_rate or 48000)))
 
     def _tick(self):
         # 先排下一帧定时器再绘制，避免绘制耗时造成节拍漂移
@@ -594,22 +594,33 @@ class Visualizer:
         xr = x[:m].reshape(cols, -1)
         mins = xr.min(axis=1)
         maxs = xr.max(axis=1)
+        # 相邻列轻度平滑，消除逐列振幅跳变（跳变会让描边断开成点）
+        ker = np.ones(5) / 5.0
+        maxs = np.convolve(maxs, ker, mode="same")
+        mins = np.convolve(mins, ker, mode="same")
         step = (w - WAVE_L - WAVE_R - 1) / max(1, cols - 1)
-        pw = max(1, int(step) + 1)   # 每列加宽到相邻列重叠，避免出现虚线状空隙
+        pw = max(1, int(step) + 1)
 
         accent = np.array(ACCENT_RGB, dtype=np.uint8)
         fill = np.array(FILL_RGB, dtype=np.uint8)
+        tops = np.clip((cx - maxs * g).astype(int), 0, h - 1)
+        bots = np.clip((cx - mins * g).astype(int), 0, h - 1)
         for i in range(cols):
             xi = WAVE_L + int(i * step)
-            yt = int(cx - maxs[i] * g)
-            yb = int(cx - mins[i] * g)
-            yt = max(0, min(h - 1, yt))
-            yb = max(0, min(h - 1, yb))
+            xj = min(w - 1, xi + pw)
+            yt, yb = int(tops[i]), int(bots[i])
             if yb < yt:
                 yt, yb = yb, yt
-            buf[yt:yb + 1, xi:xi + pw] = fill
-            buf[yt, xi:xi + pw] = accent
-            buf[yb, xi:xi + pw] = accent
+            # 填充范围覆盖到相邻列的极值，保证色带在列间无缝衔接
+            if i + 1 < cols:
+                yt = min(yt, int(tops[i + 1]))
+                yb = max(yb, int(bots[i + 1]))
+            if i > 0:
+                yt = min(yt, int(tops[i - 1]))
+                yb = max(yb, int(bots[i - 1]))
+            buf[yt:yb + 1, xi:xj] = fill
+            buf[yt, xi:xj] = accent
+            buf[yb, xi:xj] = accent
         self._push(c)
 
 
