@@ -11,6 +11,7 @@
 依赖: pip install pyaudiowpatch numpy customtkinter
 运行: python main.py
 """
+import sys
 import threading
 import time
 
@@ -86,6 +87,7 @@ class AudioEngine:
         self.lock = threading.Lock()
         self.alive = False
         self.error = ""
+        self._cb_buf = np.empty(0, dtype=np.float32)  # 回调复用，避免每 buffer 分配
 
     def list_loopbacks(self):
         out = []
@@ -162,7 +164,11 @@ class AudioEngine:
         try:
             data = np.frombuffer(in_data, dtype=np.float32)
             if self.channels > 1 and data.size % self.channels == 0:
-                mono = data.reshape(-1, self.channels).mean(axis=1)
+                n = data.size // self.channels
+                if self._cb_buf.size != n:
+                    self._cb_buf = np.empty(n, dtype=np.float32)
+                data.reshape(-1, self.channels).mean(axis=1, out=self._cb_buf)
+                mono = self._cb_buf
             else:
                 mono = data
             n = min(mono.size, RING_SIZE)
@@ -215,6 +221,10 @@ class Visualizer:
         self.fps_t0 = time.time()
         self.fps = 0.0
 
+        # FFT 频谱缓存（N / n_bars / sr 不变时复用窗与分 bin 映射）
+        self._spec_cache = None
+        self._err_throttle = 0.0
+
         # 每张画布的渲染状态
         self._render = {}   # canvas -> dict(img_id, photo, buf, ...)
         self._sr_used = 0
@@ -232,9 +242,14 @@ class Visualizer:
         """无控制台运行(pythonw)时把回调异常落盘，便于排查"""
         try:
             import traceback
+            self._log_error("".join(traceback.format_exception(exc, val, tb)))
+        except Exception:
+            pass
+
+    def _log_error(self, msg):
+        try:
             with open("error.log", "a", encoding="utf-8") as f:
-                f.write(time.strftime("[%Y-%m-%d %H:%M:%S]\n") +
-                        "".join(traceback.format_exception(exc, val, tb)) + "\n")
+                f.write(time.strftime("[%Y-%m-%d %H:%M:%S]\n") + msg + "\n")
         except Exception:
             pass
 
@@ -331,12 +346,6 @@ class Visualizer:
         buf = (WASH_TOP.reshape(1, 1, 3) * (1 - t) +
                WASH_BOT.reshape(1, 1, 3) * t).astype(np.uint8)
         buf = np.repeat(buf, w, axis=1)
-
-        baseline = h - SPEC_BASE
-        top_m = SPEC_TOP
-
-        def y_of(db):
-            return baseline - (db - DB_FLOOR) / (-DB_FLOOR) * (baseline - top_m)
 
         baseline = h - SPEC_BASE
         top_m = SPEC_TOP
@@ -499,7 +508,12 @@ class Visualizer:
                     self._draw_wave()
                 self.frames += 1
         except Exception:
-            pass
+            import traceback
+            now_t = time.time()
+            if now_t - self._err_throttle >= 1.0:  # 节流，避免每帧刷爆 error.log
+                self._err_throttle = now_t
+                self._log_error("".join(traceback.format_exception(
+                    *sys.exc_info())))
         now = time.time()
         if now - self.fps_t0 >= 0.5:
             self.fps = self.frames / (now - self.fps_t0)
@@ -511,25 +525,30 @@ class Visualizer:
     def _compute_spectrum(self, x):
         sr = max(8000, self.engine.sample_rate or 48000)
         N = self._fft_size()
+        cache = self._spec_cache
+        if cache is None or cache[0] != (N, sr, self.n_bars):
+            freqs = np.fft.rfftfreq(N, 1.0 / sr)
+            top_f = min(MAX_F, sr / 2.0 - 1.0)
+            edges = np.geomspace(MIN_F, top_f, self.n_bars + 1)
+            idx = np.searchsorted(freqs, edges)
+            idx[0] = 0
+            idx[-1] = len(freqs)
+            cache = self._spec_cache = ((N, sr, self.n_bars),
+                                        np.hanning(N), idx)
+        win, idx = cache[1], cache[2]
+
         if x.size < N:
             x = np.pad(x, (0, N - x.size))
         else:
             x = x[-N:]
-        win = np.hanning(N)
         spec = np.abs(np.fft.rfft(x * win))
         db = 20.0 * np.log10(spec / (N / 4.0) + 1e-10)
         np.clip(db, DB_FLOOR, 0.0, out=db)
 
-        freqs = np.fft.rfftfreq(N, 1.0 / sr)
-        top_f = min(MAX_F, sr / 2.0 - 1.0)
-        edges = np.geomspace(MIN_F, top_f, self.n_bars + 1)
-        idx = np.searchsorted(freqs, edges)
-        idx[0] = 0
-        idx[-1] = len(freqs)
         vals = np.empty(self.n_bars)
         for i in range(self.n_bars):
             a, b = idx[i], max(idx[i + 1], idx[i] + 1)
-            b = min(b, len(freqs))
+            b = min(b, db.size)
             vals[i] = db[a:b].max() if b > a else DB_FLOOR
         return vals
 
@@ -635,5 +654,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main())
