@@ -1,3 +1,12 @@
-pyaudiowpatch>=0.2.12.6
-numpy>=1.24
-customtkinter>=5.2
+# 运行依赖（支持 Python 3.10 ~ 3.13，开发环境为 3.10.11 / Windows）
+#
+# 桌面软件不建议用无上限版本：这里给出上下界，精确版本见 requirements.lock
+# （install.bat 优先安装 requirements.lock，保证复现一致）。
+
+pyaudiowpatch>=0.2.12.6,<0.3
+numpy>=1.24,<3
+customtkinter>=5.2,<7
+
+# 可选但推荐：装了它就用 Pillow 复用同一个 PhotoImage 上屏，少一次 PPM 编解码；
+# 没装也能跑（自动退回 PPM 字节流路径）。
+Pillow>=10,<13

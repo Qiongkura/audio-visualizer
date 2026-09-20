@@ -1,8 +1,16 @@
 @echo off
-cd /d %~dp0
+rem ---------------------------------------------------------------
+rem  Launch the visualizer (no console window).
+rem  Run install.bat first if .\venv is missing.
+rem ---------------------------------------------------------------
+setlocal
+cd /d "%~dp0"
+
 if not exist venv\Scripts\pythonw.exe (
-    echo 尚未安装依赖，请先运行 install.bat
+    echo Dependencies are not installed yet. Please run install.bat first.
     pause
     exit /b 1
 )
+
 start "" venv\Scripts\pythonw.exe main.py
+exit /b 0
