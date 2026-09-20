@@ -94,7 +94,7 @@ venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 覆盖内容：环形缓冲区读写顺序与有效长度、FFT 频率柱映射与 30Hz/16kHz 边界、
 采样率变化、波形自动增益、设备状态机（重连 / 切设备 / 设备断开 / 枚举失败）、
 渲染帧缓冲与上屏。全部使用假设备，不需要声卡，也不依赖真实音频硬件，
-所以 `.github/workflows/tests.yml` 里直接在 CI 上跑（Python 3.10 / 3.12）。
+可以直接丢进 CI 跑（建议矩阵：Python 3.10 / 3.12，Windows runner）。
 
 需要验证真实采集链路时，单独运行 `test_capture.py`（会播放 3 秒 440Hz 测试音）。
 
