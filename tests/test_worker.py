@@ -85,16 +85,30 @@ class TestThreadLifecycle(unittest.TestCase):
         self.assertFalse(w.is_alive())
 
     def test_keeps_only_latest_frame(self):
-        w = make_worker(np.zeros(8192, dtype=np.float32))
+        """只保留最新一帧：中间帧被丢弃，而不是排队积压。
+
+        注意：不能在线程还活着的时候断言 latest() 恒等于刚取到的那个帧对象 ——
+        工作线程随时可能算出更新的一帧（interval=5ms），断言会随机失败。
+        先 stop()，join() 保证不再有写入，之后的断言才是确定的。
+        """
+        w = make_worker(np.zeros(8192, dtype=np.float32), interval=0.005)
         w.start()
         time.sleep(0.1)
         f1 = w.latest()
-        time.sleep(0.1)
-        f2 = w.latest()
+        self.assertIsNotNone(f1)
+
+        time.sleep(0.2)                        # 这期间 interval=5ms，会算几十帧
         w.stop()
+        self.assertFalse(w.is_alive(), "线程没停下来，后面的断言不可靠")
+        f2 = w.latest()
+
         self.assertIsNotNone(f2)
         self.assertGreater(f2.seq, f1.seq)
-        self.assertIs(w.latest(), f2)         # 只留最新一帧，没有积压
+        # 这 0.2 秒里算了远不止一帧，但只留下一个槽位：旧帧被丢弃而非排队
+        self.assertGreater(f2.seq - f1.seq, 1)
+        # 槽位里就是最后一帧，反复取不会吐出更旧的帧
+        for _ in range(5):
+            self.assertIs(w.latest(), f2)
 
     def test_read_error_does_not_kill_thread(self):
         def boom(_n):
