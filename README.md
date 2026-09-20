@@ -1,5 +1,7 @@
 # 音频可视化 (Audio Visualizer)
 
+[![tests](https://github.com/Qiongkura/audio-visualizer/actions/workflows/tests.yml/badge.svg)](https://github.com/Qiongkura/audio-visualizer/actions/workflows/tests.yml)
+
 自动识别电脑中**正在播放**的声音（无需选文件、无需虚拟声卡），实时显示：
 
 - **频谱**：对数频率刻度柱状图，Instagram 风格紫→粉→橙渐变，带峰值保持
@@ -14,7 +16,8 @@
 
 **方式一：直接用打包好的 exe（普通用户）**
 
-下载 `AudioVisualizer.exe` 双击即可，不需要装 Python。
+从 [Releases](https://github.com/Qiongkura/audio-visualizer/releases/latest) 下载 `AudioVisualizer.exe` 双击即可，
+不需要装 Python。exe 未做代码签名，SmartScreen 提示「未知发布者」时选「仍要运行」。
 
 **方式二：源码运行（开发者）**
 
@@ -37,6 +40,7 @@
 | `audio_visualizer/` | 源码包，见下方「工程结构」 |
 | `test_capture.py` | **硬件自检**：播放 440Hz 测试音并校验环回采集（需要声卡，手动运行） |
 | `tests/` | 单元测试，全部不需要声卡，可用于 CI |
+| `.github/workflows/tests.yml` | CI：`windows-latest` 上跑 Python 3.10 / 3.12 矩阵测试 |
 | `requirements.txt` | 运行依赖（带版本上下界） |
 | `requirements.lock` | 已实测通过的精确版本，`install.bat` 优先装这一份 |
 | `requirements-build.txt` | 打包用依赖 |
@@ -94,7 +98,11 @@ venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 覆盖内容：环形缓冲区读写顺序与有效长度、FFT 频率柱映射与 30Hz/16kHz 边界、
 采样率变化、波形自动增益、设备状态机（重连 / 切设备 / 设备断开 / 枚举失败）、
 渲染帧缓冲与上屏。全部使用假设备，不需要声卡，也不依赖真实音频硬件，
-可以直接丢进 CI 跑（建议矩阵：Python 3.10 / 3.12，Windows runner）。
+所以能直接丢进 CI 跑。
+
+已在 GitHub Actions 上跑起来（`.github/workflows/tests.yml`）：`windows-latest` runner，
+Python 3.10 / 3.12 双版本矩阵，每次推 `main` 和提 PR 自动执行。
+实测两个版本各 107 个用例全绿，单版本耗时约 2 秒。
 
 需要验证真实采集链路时，单独运行 `test_capture.py`（会播放 3 秒 440Hz 测试音）。
 
