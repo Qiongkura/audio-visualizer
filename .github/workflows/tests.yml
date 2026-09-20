@@ -1,0 +1,40 @@
+name: tests
+
+# 单元测试不依赖声卡、不依赖真实音频设备，所以可以直接在 CI 里跑。
+# 需要真实硬件的自检脚本 test_capture.py 不在采集范围内（它放声音、要声卡）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unittest:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Show environment
+        run: |
+          python -c "import sys, numpy, customtkinter; print(sys.version); print('numpy', numpy.__version__); print('ctk', customtkinter.__version__)"
+
+      - name: Compile check
+        run: python -m compileall -q main.py test_capture.py audio_visualizer tests
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -t . -v
